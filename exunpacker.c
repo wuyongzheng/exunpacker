@@ -16,7 +16,7 @@ static void dump_to_file (HANDLE process, void *base, int size)
 	int ptr = 0;
 	FILE *outfp;
 
-	_snprintf(outfile, sizeof(outfile), "%s%p.bin", outprefix, base);
+	_snprintf(outfile, sizeof(outfile), "%s%08x.bin", outprefix, base);
 	outfile[sizeof(outfile)-1] = '\0';
 	outfp = fopen(outfile, "wb");
 
@@ -113,13 +113,13 @@ static void enum_modules (HANDLE process)
 		if (memcmp(filename, "c:\\windows\\system32\\", strlen("c:\\windows\\system32\\")) == 0 &&
 				(unsigned int)moduleinfo.lpBaseOfDll >= 0x70000000u &&
 				(unsigned int)moduleinfo.lpBaseOfDll <= 0x80000000u) {
-			printf("unknown module %p %6x %s blacklisted\n",
+			printf("known module %p %6x %s blacklisted\n",
 					moduleinfo.lpBaseOfDll, moduleinfo.SizeOfImage, filename);
 			module_base[module_count] = moduleinfo.lpBaseOfDll;
 			module_size[module_count] = moduleinfo.SizeOfImage;
 			module_count ++;
 		} else {
-			printf("  known module %p %6x %s not blacklisted\n",
+			printf("unknown module %p %6x %s not blacklisted\n",
 					moduleinfo.lpBaseOfDll, moduleinfo.SizeOfImage, filename);
 		}
 		/*printf("%p %p %p %6x %s %s\n",
@@ -133,10 +133,12 @@ int main (int argc, char *argv[])
 {
 	HANDLE process;
 
-	if (argc != 2 || atoi(argv[1]) == 0) {
+	if (argc < 2 || atoi(argv[1]) == 0) {
 		printf("Usage: %s pid\n", argv[0]);
 		return 1;
 	}
+	if (argc >= 3)
+		outprefix = argv[2];
 
 	process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, atoi(argv[1]));
 	if (process == NULL) {
