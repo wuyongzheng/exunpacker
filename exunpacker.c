@@ -4,19 +4,57 @@
 
 #define MAXMODULES 500
 void *module_base[MAXMODULES];
+char *module_name[MAXMODULES];
 int module_size[MAXMODULES];
 int module_count = 0;
 
-char *outprefix = "unpacker-";
+char *outprefix = "unpacker";
 
-static void dump_to_file (HANDLE process, void *base, int size)
+static const char *protect_to_name (int protect)
+{
+	switch (protect & 0xff) {
+		case 0x01: return "na";
+		case 0x02: return "ro";
+		case 0x10: return "ex";
+		case 0x20: return "xr";
+		case 0x40: return "xw";
+		case 0x80: return "xc";
+		default: return "nk";
+	}
+}
+
+static void dump_to_file (HANDLE process, int protect, void *base, int size)
 {
 	char outfile[64];
 	char buffer[64 * 1024];
-	int ptr = 0;
+	char *modname;
+	int ptr = 0, i;
 	FILE *outfp;
 
-	_snprintf(outfile, sizeof(outfile), "%s%08x.bin", outprefix, base);
+	if (protect == PAGE_EXECUTE) {
+		printf("%p %x is PAGE_EXECUTE. cannot dump.\n", base, size);
+		return;
+	}
+
+	if (protect == PAGE_READONLY) // comment if want RO data.
+		return;
+
+	if (protect != PAGE_EXECUTE_READ &&
+			protect != PAGE_EXECUTE_READWRITE &&
+			protect != PAGE_EXECUTE_WRITECOPY)
+		return;
+
+	for (i = 0, modname = "nomodule"; i < module_count; i ++) {
+		if (module_base[i] <= base &&
+				(char *)module_base[i] + module_size[i] > base) {
+			modname = module_name[i];
+			break;
+		}
+	}
+
+	_snprintf(outfile, sizeof(outfile), "%s-%08x-%s-%s.bin",
+			outprefix, base, protect_to_name(protect), modname);
+	printf("unpacking %d bytes to %s.\n", size, outfile);
 	outfile[sizeof(outfile)-1] = '\0';
 	outfp = fopen(outfile, "wb");
 
@@ -53,22 +91,9 @@ static void enum_maps (HANDLE process)
 			break;
 		}
 
-		if (meminfo.State == MEM_COMMIT && meminfo.RegionSize > 0) {
-			if (meminfo.Protect == PAGE_EXECUTE) {
-				printf("%p %x is PAGE_EXECUTE. cannot dump.\n", meminfo.BaseAddress, meminfo.RegionSize);
-			} else if (meminfo.Protect == PAGE_EXECUTE_READ ||
-					meminfo.Protect == PAGE_EXECUTE_READWRITE ||
-					meminfo.Protect == PAGE_EXECUTE_WRITECOPY) {
-				int i;
-				for (i = 0; i < module_count; i ++) {
-					if (module_base[i] <= meminfo.BaseAddress &&
-							(char *)module_base[i] + module_size[i] > meminfo.BaseAddress)
-						break;
-				}
-				if (i == module_count) // not in known module list
-					dump_to_file(process, meminfo.BaseAddress, meminfo.RegionSize);
-			}
-		}
+		if (meminfo.State == MEM_COMMIT && meminfo.RegionSize > 0)
+			dump_to_file(process, meminfo.Protect, meminfo.BaseAddress, meminfo.RegionSize);
+
 		nextbase = (unsigned int)meminfo.BaseAddress + (unsigned int)meminfo.RegionSize;
 		if (nextbase < (unsigned int)meminfo.BaseAddress) // overflow
 			break;
@@ -103,9 +128,23 @@ static void enum_modules (HANDLE process)
 			printf("error: GetModuleBaseName() failed\n");
 			continue;
 		}
-		for (p = basename; *p; p ++)
+		if (strchr(basename, '.') != NULL)
+			strchr(basename, '.')[0] = '\0';
+		for (p = basename; *p; p ++) {
 			if (*p >= 'A' && *p <= 'Z')
 				*p += 'a' - 'A';
+			else if (*p >= 'a' && *p <= 'z')
+				;
+			else if (*p >= '0' && *p <= '9')
+				;
+			else
+				*p = '_';
+		}
+		if (strlen(basename) > 8)
+			basename[8] = '\0';
+		if (strlen(basename) < 8)
+			strcat(basename, "________" + strlen(basename));
+
 		if (GetModuleInformation(process, hMods[i], &moduleinfo, sizeof(moduleinfo)) == 0) {
 			printf("error: GetModuleInformation() failed\n");
 			continue;
@@ -117,6 +156,7 @@ static void enum_modules (HANDLE process)
 					moduleinfo.lpBaseOfDll, moduleinfo.SizeOfImage, filename);
 			module_base[module_count] = moduleinfo.lpBaseOfDll;
 			module_size[module_count] = moduleinfo.SizeOfImage;
+			module_name[module_count] = strdup(basename);
 			module_count ++;
 		} else {
 			printf("unknown module %p %6x %s not blacklisted\n",
