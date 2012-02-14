@@ -5,6 +5,7 @@
 #define MAXMODULES 500
 void *module_base[MAXMODULES];
 char *module_name[MAXMODULES];
+char *module_path[MAXMODULES];
 int module_size[MAXMODULES];
 int module_count = 0;
 
@@ -28,7 +29,7 @@ static void dump_to_file (HANDLE process, int protect, void *base, int size)
 	char outfile[64];
 	char buffer[64 * 1024];
 	char *modname;
-	int ptr = 0, i;
+	int i;
 	FILE *outfp;
 
 	if (protect == PAGE_EXECUTE) {
@@ -44,6 +45,9 @@ static void dump_to_file (HANDLE process, int protect, void *base, int size)
 			protect != PAGE_EXECUTE_WRITECOPY)
 		return;
 
+	if ((unsigned int)base % 1024 != 0)
+		printf("warning: base address %p not 4k alligned\n", base);
+
 	for (i = 0, modname = "nomodule"; i < module_count; i ++) {
 		if (module_base[i] <= base &&
 				(char *)module_base[i] + module_size[i] > base) {
@@ -52,16 +56,16 @@ static void dump_to_file (HANDLE process, int protect, void *base, int size)
 		}
 	}
 
-	_snprintf(outfile, sizeof(outfile), "%s-%08x-%s-%s.bin",
-			outprefix, base, protect_to_name(protect), modname);
+	_snprintf(outfile, sizeof(outfile), "%s-%05x-%s-%s.bin",
+			outprefix, (unsigned int)base >> 12, protect_to_name(protect), modname);
 	printf("unpacking %d bytes to %s.\n", size, outfile);
 	outfile[sizeof(outfile)-1] = '\0';
 	outfp = fopen(outfile, "wb");
 
-	while (ptr < size) {
-		SIZE_T sizetoread = sizeof(buffer) < size - ptr ? sizeof(buffer) : size - ptr;
+	for (i = 0; i < size; i += sizeof(buffer)) {
+		SIZE_T sizetoread = sizeof(buffer) < size - i ? sizeof(buffer) : size - i;
 		SIZE_T sizeread;
-		if (ReadProcessMemory(process, (char *)base + ptr, buffer, sizetoread, &sizeread) == 0) {
+		if (ReadProcessMemory(process, (char *)base + i, buffer, sizetoread, &sizeread) == 0) {
 			printf("failed to read.\n");
 			break;
 		}
@@ -70,7 +74,6 @@ static void dump_to_file (HANDLE process, int protect, void *base, int size)
 			break;
 		}
 		fwrite(buffer, sizetoread, 1, outfp);
-		ptr += sizetoread;
 	}
 
 	fclose(outfp);
@@ -149,19 +152,13 @@ static void enum_modules (HANDLE process)
 			printf("error: GetModuleInformation() failed\n");
 			continue;
 		}
-		if (memcmp(filename, "c:\\windows\\system32\\", strlen("c:\\windows\\system32\\")) == 0 &&
-				(unsigned int)moduleinfo.lpBaseOfDll >= 0x70000000u &&
-				(unsigned int)moduleinfo.lpBaseOfDll <= 0x80000000u) {
-			printf("known module %p %6x %s blacklisted\n",
-					moduleinfo.lpBaseOfDll, moduleinfo.SizeOfImage, filename);
-			module_base[module_count] = moduleinfo.lpBaseOfDll;
-			module_size[module_count] = moduleinfo.SizeOfImage;
-			module_name[module_count] = strdup(basename);
-			module_count ++;
-		} else {
-			printf("unknown module %p %6x %s not blacklisted\n",
-					moduleinfo.lpBaseOfDll, moduleinfo.SizeOfImage, filename);
-		}
+
+		module_base[module_count] = moduleinfo.lpBaseOfDll;
+		module_size[module_count] = moduleinfo.SizeOfImage;
+		module_name[module_count] = strdup(basename);
+		module_path[module_count] = strdup(filename);
+		module_count ++;
+
 		/*printf("%p %p %p %6x %s %s\n",
 				hMods[i],
 				moduleinfo.lpBaseOfDll, moduleinfo.EntryPoint, moduleinfo.SizeOfImage,
