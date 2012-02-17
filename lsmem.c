@@ -73,7 +73,7 @@ static void enum_maps (HANDLE process)
 			printf("%08x %08x %8x %s %s %s %s\n",
 					meminfo.BaseAddress, meminfo.AllocationBase, meminfo.RegionSize,
 					name_protect(meminfo.AllocationProtect),
-					name_protect(meminfo.Protect),
+					meminfo.State == MEM_RESERVE ? "   " : name_protect(meminfo.Protect),
 					name_type(meminfo.Type),
 					name_state(meminfo.State));
 		}

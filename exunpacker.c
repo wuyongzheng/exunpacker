@@ -169,23 +169,43 @@ static void enum_modules (HANDLE process)
 int main (int argc, char *argv[])
 {
 	HANDLE process;
+	DWORD pid;
 
-	if (argc < 2 || atoi(argv[1]) == 0) {
+	if (argc < 2) {
 		printf("Usage: %s pid\n", argv[0]);
 		return 1;
 	}
 	if (argc >= 3)
 		outprefix = argv[2];
 
-	process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, atoi(argv[1]));
+	pid = atoi(argv[1]);
+	if (pid <= 0) {
+		STARTUPINFO sinfo;
+		PROCESS_INFORMATION pinfo;
+		memset(&pinfo, 0, sizeof(pinfo));
+		memset(&sinfo, 0, sizeof(sinfo));
+		sinfo.cb = sizeof(sinfo);
+		if (!CreateProcess(NULL, argv[1], NULL, NULL, FALSE, 0, NULL, NULL, &sinfo, &pinfo)) {
+			printf("error: CreateProcess(%s) failed.\n", argv[1]);
+			return 1;
+		}
+		CloseHandle(pinfo.hProcess);
+		CloseHandle(pinfo.hThread);
+		pid = pinfo.dwProcessId;
+		printf("Process %d created. sleep for 2 sec.\n", pid);
+		Sleep(2000);
+	}
+
+	process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_TERMINATE, FALSE, pid);
 	if (process == NULL) {
-		printf("error: OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, %d) failed\n", atoi(argv[1]));
+		printf("error: OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_TERMINATE, FALSE, %d) failed. GetLastError()=0x%x\n", pid, GetLastError());
 		return 1;
 	}
 
 	enum_modules(process);
 	enum_maps(process);
 
+	TerminateProcess(process, 0);
 	CloseHandle(process);
 
 	return 0;
